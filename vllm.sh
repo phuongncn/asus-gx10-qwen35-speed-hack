@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
 #  vllm.sh — Qwen3.5-122B-A10B/35B Hybrid INT4+FP8 on ASUS GX10
-#  Pipeline v2: ~51/~112 tok/s | MTP-2 | FlashInfer 0.6.7
+#  Pipeline v2: ~51-55 tok/s | MTP-2 | FlashInfer 0.6.7
 #  Reference: github.com/albond/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4
 # ═══════════════════════════════════════════════════════════════════
 
@@ -109,21 +109,27 @@ if [ "$MENU_CHOICE" = "1" ]; then
     L122="1. Qwen3.5-122B-A10B Hybrid  (~51 tok/s  | ~75GB download + ~71GB output)"
     $HAVE_122B && $HAVE_DOCKER && L122="1. Qwen3.5-122B-A10B Hybrid  (~51 tok/s)  ✓ already fully installed"
     echo "  $L122"
-    echo "  2. Qwen3.5-35B-A3B Hybrid   (~112 tok/s | ~18GB int4 + FP8 download)"
-    echo "  3. Custom model              (enter INT4 AutoRound + FP8 repo of any)"
-    echo "  4. Both (1+2)"
+    echo "  2. Qwen3.5-35B-A3B Hybrid   (~112 tok/s | best speed, INT4+FP8 merged)"
+    echo "  3. Qwen3.5-35B-A3B FP8+MTP  (better quality, no INT4, ~35GB download)"
+    echo "  4. Custom model              (enter INT4 AutoRound + FP8 repo of any)"
+    echo "  5. Both (1+2)"
     echo ""
-    read -p "Select (1-4): " INSTALL_CHOICE
+    read -p "Select (1-5): " INSTALL_CHOICE
 
     case "$INSTALL_CHOICE" in
-        1) DO_122B=true;  DO_HYBRID=false ;;
-        2) DO_122B=false; DO_HYBRID=true;  HYBRID_PRESET="35b" ;;
-        3) DO_122B=false; DO_HYBRID=true;  HYBRID_PRESET="custom" ;;
-        4) DO_122B=true;  DO_HYBRID=true;  HYBRID_PRESET="35b" ;;
+        1) DO_122B=true;  DO_HYBRID=false; DO_FP8_NATIVE=false ;;
+        2) DO_122B=false; DO_HYBRID=true;  DO_FP8_NATIVE=false; HYBRID_PRESET="35b" ;;
+        3) DO_122B=false; DO_HYBRID=false; DO_FP8_NATIVE=true ;;
+        4) DO_122B=false; DO_HYBRID=true;  DO_FP8_NATIVE=false; HYBRID_PRESET="custom" ;;
+        5) DO_122B=true;  DO_HYBRID=true;  DO_FP8_NATIVE=false; HYBRID_PRESET="35b" ;;
         *) error "Invalid selection"; exit 1 ;;
     esac
 
-    sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+    read -p "Drop system memory cache before install? (Recommended to free RAM) [Y/n]: " _DO_DROP
+    _DO_DROP=${_DO_DROP:-Y}
+    if [[ "$_DO_DROP" =~ ^[Yy]$ ]]; then
+        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' && info "Memory cache flushed" || warn "Could not flush cache (continuing anyway)"
+    fi
 
     # ════════════════════════════════════════════════════════════════
     # 122B — use original install.sh (idempotent, skips already done steps)
@@ -270,6 +276,81 @@ if [ "$MENU_CHOICE" = "1" ]; then
         fi
 
         info "$OUT_NAME ready! Run option 2 → select model to start."
+    fi
+
+    # ════════════════════════════════════════════════════════════════
+    # FP8 NATIVE + MTP — download FP8 directly, no INT4 needed
+    # ════════════════════════════════════════════════════════════════
+    if ${DO_FP8_NATIVE:-false}; then
+        step "Install FP8 native + MTP: Qwen3.5-35B-A3B"
+
+        cd "$REPO_DIR"
+        if [ ! -d .venv ]; then python3 -m venv .venv; fi
+        # shellcheck disable=SC1091
+        source .venv/bin/activate
+        pip install -q -U pip
+        pip install -q torch numpy safetensors huggingface_hub
+
+        DEF_FP8_NATIVE="Qwen/Qwen3.5-35B-A3B-FP8"
+        DEF_OUT_FP8="qwen35-35b-fp8-mtp"
+
+        echo ""
+        read -p "FP8 HF repo [$DEF_FP8_NATIVE]: " FP8_NATIVE_REPO
+        FP8_NATIVE_REPO=${FP8_NATIVE_REPO:-$DEF_FP8_NATIVE}
+
+        read -p "Output name in ~/models/ [$DEF_OUT_FP8]: " OUT_NAME_FP8
+        OUT_NAME_FP8=${OUT_NAME_FP8:-$DEF_OUT_FP8}
+        FP8_NATIVE_OUT="$HOME/models/$OUT_NAME_FP8"
+
+        info "FP8 source : $FP8_NATIVE_REPO"
+        info "Output     : $FP8_NATIVE_OUT"
+
+        SKIP_FP8_BUILD=false
+        if [ -f "$FP8_NATIVE_OUT/model.safetensors.index.json" ]; then
+            warn "$OUT_NAME_FP8 already exists"
+            read -p "Rebuild (delete and rebuild)? (y/N): " DO_REBUILD_FP8
+            if [[ "$DO_REBUILD_FP8" =~ ^[Yy]$ ]]; then
+                rm -rf "$FP8_NATIVE_OUT"
+            else
+                info "Skipping build — keeping $OUT_NAME_FP8"
+                SKIP_FP8_BUILD=true
+            fi
+        fi
+
+        if ! $SKIP_FP8_BUILD; then
+            info "Downloading FP8 model to local dir (~35GB, takes a while)..."
+            mkdir -p "$FP8_NATIVE_OUT"
+            python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download('$FP8_NATIVE_REPO', local_dir='$FP8_NATIVE_OUT', local_dir_use_symlinks=False)
+print('Download complete')
+"
+            [ -f "$FP8_NATIVE_OUT/model.safetensors.index.json" ] \
+                || { error "FP8 download failed — index file not found"; exit 1; }
+            info "FP8 model downloaded: $FP8_NATIVE_OUT"
+
+            info "Checking MTP speculative decoding weights..."
+            _mtp_count=$(python3 -c "
+import json, sys
+with open('$FP8_NATIVE_OUT/model.safetensors.index.json') as f:
+    idx = json.load(f)
+mtp = [k for k in idx['weight_map'] if 'mtp' in k.lower()]
+print(len(mtp))
+" 2>/dev/null || echo "0")
+            if [ "$_mtp_count" -gt 0 ] 2>/dev/null; then
+                info "MTP weights already embedded in FP8 model ($_mtp_count tensors) — ready for speculative decoding"
+            elif [ -f "$REPO_DIR/patches/02-mtp-speculative/add-mtp-weights.py" ] \
+               && [ -f "$FP8_NATIVE_OUT/model_extra_tensors.safetensors" ]; then
+                python "$REPO_DIR/patches/02-mtp-speculative/add-mtp-weights.py" \
+                    --source "$FP8_NATIVE_OUT" \
+                    --target "$FP8_NATIVE_OUT"
+                info "MTP done"
+            else
+                warn "MTP tensors not found in index — speculative decoding may not be available"
+            fi
+        fi
+
+        info "$OUT_NAME_FP8 ready! Run option 2 → select model to start."
     fi
 
     info "Installation complete!"
@@ -471,17 +552,17 @@ if [ "$MENU_CHOICE" = "2" ]; then
 
     HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub"
 
-    # Scan all hybrid models in ~/models/
+    # Scan all models in ~/models/
     # - 122B: name contains "122b"
-    # - Others: all folders with model.safetensors.index.json + name contains "hybrid|int4fp8"
-    LOCAL_HYBRID_SMALL_LIST=()   # 35B, 27B, custom, ...
+    # - Others: folders with model.safetensors.index.json + name contains "hybrid|int4fp8|fp8"
+    LOCAL_HYBRID_SMALL_LIST=()   # 35B, 27B, custom, FP8-native, ...
     LOCAL_HYBRID_122B=""
     for d in "$HOME/models"/*/; do
         [ -f "${d}model.safetensors.index.json" ] || continue
         dname=$(basename "$d")
         if echo "$dname" | grep -qi "122b"; then
             LOCAL_HYBRID_122B="${d%/}"
-        elif echo "$dname" | grep -qi "hybrid\|int4fp8"; then
+        elif echo "$dname" | grep -qi "hybrid\|int4fp8\|fp8"; then
             LOCAL_HYBRID_SMALL_LIST+=("${d%/}")
         fi
     done
@@ -553,7 +634,13 @@ if [ "$MENU_CHOICE" = "2" ]; then
                 MODEL_ID="Intel/Qwen3.5-35B-A3B-int4-AutoRound"
                 warn "Will download Intel/Qwen3.5-35B-A3B-int4-AutoRound (~18GB)"
             fi
-            USE_HYBRID=true; QUANT="autoround"; MTP_TOKENS=2; MODEL_SIZE="35B"
+            # Detect if selected model is FP8-native (no INT4 merge)
+            if echo "$MODEL_ID" | grep -qi "fp8" && ! echo "$MODEL_ID" | grep -qi "int4\|hybrid"; then
+                USE_HYBRID=false; QUANT=""; MTP_TOKENS=2; MODEL_SIZE="35B"
+                info "Detected FP8-native model — using fp8 quantization mode"
+            else
+                USE_HYBRID=true; QUANT="autoround"; MTP_TOKENS=2; MODEL_SIZE="35B"
+            fi
             ;;
         2)
             # 122B Hybrid v2
@@ -642,9 +729,13 @@ if [ "$MENU_CHOICE" = "2" ]; then
 
     # ─── Flush cache before start ──────────────────────────────────
     step "Preparing system"
-    warn "Flushing memory cache..."
-    sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
-    info "Cache flushed"
+    read -p "Drop system memory cache before starting? (Recommended to free RAM for the model) [Y/n]: " _DO_DROP
+    _DO_DROP=${_DO_DROP:-Y}
+    if [[ "$_DO_DROP" =~ ^[Yy]$ ]]; then
+        sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' && info "Memory cache flushed" || warn "Could not flush cache (continuing anyway)"
+    else
+        info "Skipping cache flush"
+    fi
 
     # Stop and remove old container (whether running or dead)
     if docker ps -aq -f name="^${CONTAINER_NAME}$" | grep -q .; then
@@ -668,7 +759,6 @@ if [ "$MENU_CHOICE" = "2" ]; then
         VLLM_ARGS="$VLLM_ARGS --reasoning-parser qwen3"
         VLLM_ARGS="$VLLM_ARGS --enable-auto-tool-choice"
         VLLM_ARGS="$VLLM_ARGS --tool-call-parser qwen3_coder"
-        VLLM_ARGS="$VLLM_ARGS --load-format fastsafetensors"
 
         [ -n "$QUANT" ] && VLLM_ARGS="$VLLM_ARGS --quantization $QUANT"
         [ "${USE_FLASHINFER:-false}" = true ] && VLLM_ARGS="$VLLM_ARGS --attention-backend FLASHINFER"
@@ -686,14 +776,25 @@ if [ "$MENU_CHOICE" = "2" ]; then
         HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
 
         # Select Docker image: use vllm-qwen35-v2 if available (has hybrid FP8 patch)
-        # vllm-qwen35-v2 uses `vllm` CLI entrypoint → needs subcommand "serve"
-        # vllm/vllm-openai:latest uses python entrypoint directly → no need
+        # Image selection:
+        #   vllm-qwen35-v2  → hybrid INT4+FP8 (has autoround dispatch patch), SM121
+        #   vllm-sm121      → FP8 native or any model needing SM121 (Blackwell/GB10)
+        #   vllm/vllm-openai:latest → fallback, compiled for SM8.x/9.0 (NOT for GB10)
+        # Both vllm-qwen35-v2 and vllm-sm121 use `vllm serve` CLI entrypoint
         DOCKER_IMAGE="vllm/vllm-openai:latest"
         VLLM_CMD_PREFIX=""
-        if [ "${USE_HYBRID:-false}" = true ] && docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
+        if [ "${USE_HYBRID:-false}" = true ] && [ "${QUANT:-}" = "autoround" ] && docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
             DOCKER_IMAGE="vllm-qwen35-v2"
             VLLM_CMD_PREFIX="serve"
-            info "Using image vllm-qwen35-v2 (with hybrid FP8 dispatch patch)"
+            VLLM_ARGS="$VLLM_ARGS --load-format fastsafetensors"
+            info "Using image vllm-qwen35-v2 (with hybrid FP8 dispatch patch, fastsafetensors)"
+        elif docker image inspect vllm-sm121:latest >/dev/null 2>&1; then
+            DOCKER_IMAGE="vllm-sm121"
+            VLLM_CMD_PREFIX="vllm serve"
+            VLLM_ARGS="$VLLM_ARGS --load-format fastsafetensors"
+            info "Using image vllm-sm121 (SM121/Blackwell native, fastsafetensors)"
+        else
+            warn "vllm-sm121 not found — falling back to vllm/vllm-openai:latest (may fail on GB10)"
         fi
 
         # Mount local model path if MODEL_ID is a local path (starts with /)

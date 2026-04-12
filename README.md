@@ -5,7 +5,7 @@
 ![Hardware](https://img.shields.io/badge/Hardware-ASUS_GX10_|_DGX_Spark-green)
 
 > Unlock a **4-5x speedup** for Qwen3.5 on your ASUS GX10 / DGX Spark.
-> Hybrid INT4+FP8 + MTP speculative decoding, automated in one shell script.
+> Two modes: **Hybrid INT4+FP8 + MTP** for max single-request speed, or **Native FP8 + MTP** for full quality with better concurrent throughput.
 >
 > ⚡ **35B:** `30 t/s → 112+ t/s`
 > ⚡ **122B:** `10 t/s → 51 t/s`
@@ -30,6 +30,8 @@ The results:
 - **122B: 30 t/s → 51 t/s**
 - **27B: 10 t/s → 24 t/s**
 
+In April 2026, after community feedback about INT4 quality tradeoffs, I added a **Native FP8 + MTP** mode — slower per request, but full quality and higher concurrent throughput.
+
 I gave albond 10 stars on GitHub (by starring and unstarring repeatedly — he truly deserves it). This script is my way of paying it forward to everyone else who just bought this machine and is wondering why it feels slow.
 
 ---
@@ -39,6 +41,7 @@ I gave albond 10 stars on GitHub (by starring and unstarring repeatedly — he t
 - Builds a Hybrid INT4+FP8 checkpoint (albond's technique, extended for 35B + any AutoRound INT4 model)
 - Adds MTP (Multi-Token Prediction) speculative decoding weights
 - Runs everything inside Docker with patched vLLM (FlashInfer 0.6.7, FP8 dispatch fix)
+- **Native FP8 + MTP** mode: runs `Qwen/Qwen3.5-35B-A3B-FP8` directly with MTP weights — no INT4 merging, full FP8 quality
 - Interactive menu: install → start → benchmark — no Docker expertise needed
 
 ## Quick Start
@@ -52,6 +55,18 @@ chmod +x vllm.sh
 Then select **1** (Install) → choose your model → select **2** (Start server).
 
 ## Benchmark Results
+
+### Qwen3.5-35B-A3B Native FP8 + MTP (sequential, single request)
+
+| Task     | Tokens | Time   | Speed     |
+|----------|--------|--------|-----------|
+| Q&A      | 256    | 3.85s  | 66 tok/s  |
+| Code     | 512    | 7.05s  | 73 tok/s  |
+| JSON     | 1024   | 14.62s | 70 tok/s  |
+| Math     | 32     | 0.52s  | 61 tok/s  |
+| LongCode | 2048   | 27.51s | 74 tok/s  |
+
+**Concurrent (4 parallel requests): 185.4 tok/s total throughput**
 
 ### Qwen3.5-35B-A3B Hybrid INT4+FP8 (sequential, single request)
 
@@ -70,8 +85,28 @@ Then select **1** (Install) → choose your model → select **2** (Start server
 | Model        | Ollama | llama.cpp (manual build) | This hack        | Method                |
 |--------------|--------|--------------------------|------------------|-----------------------|
 | Qwen3.5-35B  | ~30 t/s | ~72 t/s                 | **112+ t/s** ⚡  | Hybrid INT4+FP8 + MTP |
+| Qwen3.5-35B (native FP8) | N/A ¹ | ~49 t/s | **~70 t/s** ⚡ / **185 tok/s** concurrent | Native FP8 + MTP |
 | Qwen3.5-122B | ~10 t/s | ~30 t/s                 | **51 t/s** ⚡    | Hybrid INT4+FP8 + MTP |
-| Qwen3.5-27B  | ~10 t/s | —                        | **24 t/s** ⚡    | Hybrid INT4+FP8       |
+| Qwen3.5-27B  | ~4-12 t/s | —                        | **24 t/s** ⚡    | Hybrid INT4+FP8       |
+
+> ¹ Ollama does not support FP8 models — no GGUF available for Qwen3.5-35B-A3B-FP8.
+> llama.cpp ~49 t/s = best community result with native SM121 kernel build ([source](https://forums.developer.nvidia.com/t/dgx-spark-13-49-tok-s-with-qwen3-5-35b-native-sm121-kernel-build-guide/365083)).
+
+## Which Mode Should You Use?
+
+| | Hybrid INT4+FP8 + MTP | Native FP8 + MTP |
+|---|---|---|
+| Single-request speed | **~112 tok/s** | ~70 tok/s |
+| Concurrent throughput (4×) | 158 tok/s total | **185 tok/s total** |
+| Output quality | INT4 quantization artifacts possible | Full FP8 quality |
+| Disk usage | ~20GB | ~35GB |
+
+**Choose Hybrid** if you use the model solo and want the absolute fastest responses.
+**Choose Native FP8** if you care about output quality, run multiple concurrent users, or noticed quality issues with INT4.
+
+> This mode was added after a question from **stefan132** on the NVIDIA forums:
+> *"Would it make sense to avoid Int4 and use Qwen/Qwen3.5-35B-A3B-FP8 directly with MTP? AutoRound INT4 is great, but more and more I realize serious quality problems."*
+> Short answer: yes, it does make sense — and now it's a first-class option in this script.
 
 ## Hardware
 
@@ -92,16 +127,18 @@ Then select **1** (Install) → choose your model → select **2** (Start server
 |--------|-------------|
 | 1 | First-time setup: clone repo, build Docker, download + build hybrid model |
 | 2 | Select model and start vLLM server |
-| 3 | Stop server |
-| 4 | View logs |
-| 5 | Run benchmark |
-| 6 | Rebuild Docker image (no-cache) |
+| 3 | Native FP8 + MTP: download FP8 model + add MTP weights (better quality, ~35GB) |
+| 4 | Stop server |
+| 5 | View logs |
+| 6 | Run benchmark |
+| 7 | Rebuild Docker image (no-cache) |
 
 ## Supported Models
 
 | Model | INT4 Source | FP8 Source | Speed |
 |-------|-------------|------------|-------|
 | Qwen3.5-35B-A3B | `Intel/Qwen3.5-35B-A3B-int4-AutoRound` | `Qwen/Qwen3.5-35B-A3B-FP8` | ~112 tok/s |
+| Qwen3.5-35B-A3B FP8+MTP | *(none — native FP8)* | `Qwen/Qwen3.5-35B-A3B-FP8` | ~70 tok/s |
 | Qwen3.5-122B-A10B | `Intel/Qwen3.5-122B-A10B-int4-AutoRound` | *(via install.sh)* | ~51 tok/s |
 | Any AutoRound INT4 | Custom HF repo | Custom FP8 HF repo | varies |
 
