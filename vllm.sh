@@ -1,20 +1,20 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-#  vllm.sh — Qwen3.5-122B-A10B Hybrid INT4+FP8 trên ASUS GX10
+#  vllm.sh — Qwen3.5-122B-A10B Hybrid INT4+FP8 on ASUS GX10
 #  Pipeline v2: ~51-55 tok/s | MTP-2 | FlashInfer 0.6.7
-#  Tham khảo: github.com/albond/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4
+#  Reference: github.com/albond/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4
 # ═══════════════════════════════════════════════════════════════════
 
 set -e
 
-# ─── Đường dẫn mặc định ──────────────────────────────────────────
+# ─── Default paths ───────────────────────────────────────────────
 MODELS_DIR="$HOME/models/vllm"
-REPO_DIR="$HOME/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4"
+REPO_DIR="$HOME/GX10-QWEN3.5-SPEED-HACK"
 REPO_URL="https://github.com/albond/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4.git"
 CONTAINER_NAME="vllm-qwen35"
 HEALTH_URL="http://127.0.0.1:8000/health"
 
-# ─── Màu sắc ─────────────────────────────────────────────────────
+# ─── Colors ──────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
@@ -23,124 +23,124 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 error() { echo -e "${RED}[✗]${NC} $1"; }
 step()  { echo -e "\n${BOLD}${CYAN}═══ $1 ═══${NC}"; }
 
-# ─── Kiểm tra môi trường ─────────────────────────────────────────
-step "Kiểm tra môi trường"
+# ─── Environment check ───────────────────────────────────────────
+step "Environment Check"
 
 if ! command -v docker &>/dev/null; then
-    error "Docker chưa cài. Cài tại: https://docs.docker.com/engine/install/"
+    error "Docker not installed. Install at: https://docs.docker.com/engine/install/"
     exit 1
 fi
 info "Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')"
 
 if ! docker info &>/dev/null; then
-    error "Docker daemon chưa chạy. Thử: sudo systemctl start docker"
+    error "Docker daemon not running. Try: sudo systemctl start docker"
     exit 1
 fi
 
-# Kiểm tra GPU
+# Check GPU
 if ! command -v nvidia-smi &>/dev/null; then
-    error "nvidia-smi không tìm thấy"
+    error "nvidia-smi not found"
     exit 1
 fi
 GPU_MEM_RAW=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
 if [[ "$GPU_MEM_RAW" =~ ^[0-9]+$ ]]; then
     info "GPU memory: ${GPU_MEM_RAW} MiB ($(( GPU_MEM_RAW / 1024 )) GB)"
     if [ "$GPU_MEM_RAW" -lt 100000 ]; then
-        warn "RAM GPU < 100GB — model 122B có thể không load được"
+        warn "GPU RAM < 100GB — 122B model may not load"
     fi
 else
-    warn "Không đọc được GPU memory info (${GPU_MEM_RAW:-empty})"
+    warn "Could not read GPU memory info (${GPU_MEM_RAW:-empty})"
 fi
 
-# ─── Menu chính ──────────────────────────────────────────────────
+# ─── Main menu ───────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}=== vLLM Manager cho ASUS GX10 ===${NC}"
-echo "  1. Cài đặt lần đầu (clone repo + build Docker + tải model)"
-echo "  2. Chọn model và khởi động server"
-echo "  3. Dừng server"
-echo "  4. Xem logs"
-echo "  5. Chạy benchmark"
+echo -e "${BOLD}=== vLLM Manager for ASUS GX10 ===${NC}"
+echo "  1. First-time setup (clone repo + build Docker + download model)"
+echo "  2. Select model and start server"
+echo "  3. Stop server"
+echo "  4. View logs"
+echo "  5. Run benchmark"
 echo "  6. Rebuild Docker image (--no-cache)"
 echo ""
-read -p "Chọn (1-6): " MENU_CHOICE
+read -p "Select (1-6): " MENU_CHOICE
 
 # ═══════════════════════════════════════════════════════════════════
-# OPTION 1: CÀI ĐẶT LẦN ĐẦU
+# OPTION 1: FIRST-TIME SETUP
 # ═══════════════════════════════════════════════════════════════════
 if [ "$MENU_CHOICE" = "1" ]; then
-    step "Cài đặt"
+    step "Setup"
 
-    # ── Clone repo nếu chưa có ───────────────────────────────────────
+    # ── Clone repo if not exists ─────────────────────────────────────
     if [ -d "$REPO_DIR" ]; then
-        read -p "Pull update repo mới nhất? (y/N): " DO_PULL
+        read -p "Pull latest repo update? (y/N): " DO_PULL
         [[ "$DO_PULL" =~ ^[Yy]$ ]] && git -C "$REPO_DIR" pull
     else
-        info "Clone repo..."
+        info "Cloning repo..."
         git clone "$REPO_URL" "$REPO_DIR"
     fi
 
-    # ── Headless gợi ý ──────────────────────────────────────────────
+    # ── Headless suggestion ─────────────────────────────────────────
     CURRENT_TARGET=$(systemctl get-default 2>/dev/null || echo "unknown")
     if [ "$CURRENT_TARGET" != "multi-user.target" ]; then
-        read -p "Chuyển sang headless (tiết kiệm RAM)? (Y/n): " DO_HEADLESS
+        read -p "Switch to headless mode (saves RAM)? (Y/n): " DO_HEADLESS
         DO_HEADLESS=${DO_HEADLESS:-Y}
         if [[ "$DO_HEADLESS" =~ ^[Yy]$ ]]; then
             sudo systemctl set-default multi-user.target
-            info "Đã set headless. Cần reboot để có hiệu lực hoàn toàn."
+            info "Headless mode set. Reboot required to take full effect."
         fi
     fi
 
     # ── HuggingFace token ────────────────────────────────────────────
     if [ -z "${HF_TOKEN:-}" ]; then
-        read -p "HF_TOKEN (enter để bỏ qua nếu đã login): " HF_TOKEN
+        read -p "HF_TOKEN (press enter to skip if already logged in): " HF_TOKEN
     fi
     [ -n "${HF_TOKEN:-}" ] && export HF_TOKEN
 
-    # ── Kiểm tra trạng thái đã cài ──────────────────────────────────
+    # ── Check installation status ────────────────────────────────────
     HYBRID_122B="$HOME/models/qwen35-122b-hybrid-int4fp8"
     HAVE_122B=false; HAVE_DOCKER=false
     [ -f "$HYBRID_122B/model.safetensors.index.json" ] && HAVE_122B=true
     docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1 && HAVE_DOCKER=true
 
-    # ── Menu chọn model ──────────────────────────────────────────────
+    # ── Model selection menu ─────────────────────────────────────────
     echo ""
-    echo "=== Chọn model cần cài ==="
+    echo "=== Select model to install ==="
     echo ""
     L122="1. Qwen3.5-122B-A10B Hybrid  (~51 tok/s  | ~75GB download + ~71GB output)"
-    $HAVE_122B && $HAVE_DOCKER && L122="1. Qwen3.5-122B-A10B Hybrid  (~51 tok/s)  ✓ đã cài đầy đủ"
+    $HAVE_122B && $HAVE_DOCKER && L122="1. Qwen3.5-122B-A10B Hybrid  (~51 tok/s)  ✓ already fully installed"
     echo "  $L122"
     echo "  2. Qwen3.5-35B-A3B Hybrid   (~112 tok/s | ~18GB int4 + FP8 download)"
-    echo "  3. Custom model              (nhập INT4 AutoRound + FP8 repo bất kỳ)"
-    echo "  4. Cả hai (1+2)"
+    echo "  3. Custom model              (enter INT4 AutoRound + FP8 repo of any)"
+    echo "  4. Both (1+2)"
     echo ""
-    read -p "Chọn (1-4): " INSTALL_CHOICE
+    read -p "Select (1-4): " INSTALL_CHOICE
 
     case "$INSTALL_CHOICE" in
         1) DO_122B=true;  DO_HYBRID=false ;;
         2) DO_122B=false; DO_HYBRID=true;  HYBRID_PRESET="35b" ;;
         3) DO_122B=false; DO_HYBRID=true;  HYBRID_PRESET="custom" ;;
         4) DO_122B=true;  DO_HYBRID=true;  HYBRID_PRESET="35b" ;;
-        *) error "Không hợp lệ"; exit 1 ;;
+        *) error "Invalid selection"; exit 1 ;;
     esac
 
     sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
 
     # ════════════════════════════════════════════════════════════════
-    # 122B — dùng install.sh gốc (idempotent, tự bỏ qua bước đã có)
+    # 122B — use original install.sh (idempotent, skips already done steps)
     # ════════════════════════════════════════════════════════════════
     if ${DO_122B:-false}; then
         if $HAVE_122B && $HAVE_DOCKER; then
-            info "122B đã cài đầy đủ — bỏ qua"
+            info "122B already fully installed — skipping"
         else
-            info "Bắt đầu cài 122B (build Docker + tải model ~100GB)..."
-            warn "Mất 30-90 phút tùy tốc độ mạng và xử lý"
+            info "Starting 122B install (build Docker + download model ~100GB)..."
+            warn "Takes 30-90 minutes depending on network and processing speed"
             cd "$REPO_DIR" && ./install.sh --no-launch
-            info "122B cài xong!"
+            info "122B installation complete!"
         fi
     fi
 
     # ════════════════════════════════════════════════════════════════
-    # HYBRID BUILD — dùng chung cho 35B preset và custom model
+    # HYBRID BUILD — shared for 35B preset and custom model
     # ════════════════════════════════════════════════════════════════
     if ${DO_HYBRID:-false}; then
 
@@ -154,19 +154,19 @@ if [ "$MENU_CHOICE" = "1" ]; then
 
         HF_CACHE_HUB="${HF_HOME:-$HOME/.cache/huggingface}/hub"
 
-        # ── Hỏi thông tin build ──────────────────────────────────────
+        # ── Ask build info ────────────────────────────────────────────
         echo ""
         if [ "$HYBRID_PRESET" = "35b" ]; then
-            step "Cài Hybrid: Qwen3.5-35B-A3B"
+            step "Install Hybrid: Qwen3.5-35B-A3B"
             DEF_INT4="Intel/Qwen3.5-35B-A3B-int4-AutoRound"
             DEF_FP8="Qwen/Qwen3.5-35B-A3B-FP8"
             DEF_OUT="qwen35-35b-hybrid-int4fp8"
             DEF_MTP="y"
         else
-            step "Cài Hybrid: Custom Model"
-            echo "  Ví dụ INT4: Intel/Qwen3.5-27B-int4-AutoRound"
-            echo "              Intel/gemma-4-26B-A4B-it-int4-mixed-AutoRound"
-            echo "  Ví dụ FP8 : Qwen/Qwen3.5-27B-FP8"
+            step "Install Hybrid: Custom Model"
+            echo "  Example INT4: Intel/Qwen3.5-27B-int4-AutoRound"
+            echo "                Intel/gemma-4-26B-A4B-it-int4-mixed-AutoRound"
+            echo "  Example FP8 : Qwen/Qwen3.5-27B-FP8"
             echo ""
             DEF_INT4=""
             DEF_FP8=""
@@ -174,17 +174,17 @@ if [ "$MENU_CHOICE" = "1" ]; then
             DEF_MTP="n"
         fi
 
-        read -p "INT4 AutoRound HF repo [${DEF_INT4:-bắt buộc nhập}]: " INT4_REPO
+        read -p "INT4 AutoRound HF repo [${DEF_INT4:-required}]: " INT4_REPO
         INT4_REPO=${INT4_REPO:-$DEF_INT4}
-        [ -z "$INT4_REPO" ] && { error "INT4 repo không được để trống"; exit 1; }
+        [ -z "$INT4_REPO" ] && { error "INT4 repo cannot be empty"; exit 1; }
 
-        read -p "FP8 HF repo [${DEF_FP8:-bắt buộc nhập}]: " FP8_REPO
+        read -p "FP8 HF repo [${DEF_FP8:-required}]: " FP8_REPO
         FP8_REPO=${FP8_REPO:-$DEF_FP8}
-        [ -z "$FP8_REPO" ] && { error "FP8 repo không được để trống"; exit 1; }
+        [ -z "$FP8_REPO" ] && { error "FP8 repo cannot be empty"; exit 1; }
 
         echo ""
-        echo "  Tên thư mục output trong ~/models/"
-        read -p "Tên output [$DEF_OUT]: " OUT_NAME
+        echo "  Output folder name in ~/models/"
+        read -p "Output name [$DEF_OUT]: " OUT_NAME
         OUT_NAME=${OUT_NAME:-$DEF_OUT}
         HYBRID_OUT="$HOME/models/$OUT_NAME"
 
@@ -192,87 +192,87 @@ if [ "$MENU_CHOICE" = "1" ]; then
         info "FP8  source : $FP8_REPO"
         info "Output      : $HYBRID_OUT"
 
-        # ── Kiểm tra output đã tồn tại ──────────────────────────────
+        # ── Check if output already exists ─────────────────────────────
         SKIP_BUILD=false
         if [ -f "$HYBRID_OUT/model.safetensors.index.json" ]; then
-            warn "$OUT_NAME đã tồn tại"
-            read -p "Rebuild lại (xóa và build mới)? (y/N): " DO_REBUILD
+            warn "$OUT_NAME already exists"
+            read -p "Rebuild (delete and rebuild)? (y/N): " DO_REBUILD
             if [[ "$DO_REBUILD" =~ ^[Yy]$ ]]; then
                 rm -rf "$HYBRID_OUT"
             else
-                info "Bỏ qua build — giữ nguyên $OUT_NAME"
+                info "Skipping build — keeping $OUT_NAME"
                 SKIP_BUILD=true
             fi
         fi
 
-        # ── Tải INT4 và build ────────────────────────────────────────
+        # ── Download INT4 and build ────────────────────────────────────
         INTEL_DIR=""
         if ! $SKIP_BUILD; then
-            info "Tải INT4 AutoRound: $INT4_REPO..."
+            info "Downloading INT4 AutoRound: $INT4_REPO..."
             hf download "$INT4_REPO"
             INTEL_DIR=$(hf download "$INT4_REPO" --quiet)
-            [ -d "$INTEL_DIR" ] || { error "Không tìm thấy INT4 dir sau download"; exit 1; }
+            [ -d "$INTEL_DIR" ] || { error "INT4 dir not found after download"; exit 1; }
             info "INT4 dir: $INTEL_DIR"
 
-            info "Build hybrid checkpoint (có thể mất 20-60 phút)..."
+            info "Building hybrid checkpoint (may take 20-60 minutes)..."
             python "$REPO_DIR/patches/01-hybrid-int4-fp8/build-hybrid-checkpoint.py" \
                 --gptq-dir "$INTEL_DIR" \
                 --fp8-repo "$FP8_REPO" \
                 --output "$HYBRID_OUT" \
                 --force
-            info "Hybrid checkpoint xong: $HYBRID_OUT"
+            info "Hybrid checkpoint done: $HYBRID_OUT"
         else
-            # Tìm INT4 cache để dùng cho MTP
+            # Find INT4 cache for MTP
             _int4_slug=$(echo "$INT4_REPO" | tr '/' '--' | sed 's/^/models--/')
             INTEL_DIR=$(find "$HF_CACHE_HUB/$_int4_slug/snapshots" \
                 -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1 || echo "")
         fi
 
-        # ── MTP speculative weights (chỉ hỗ trợ Qwen3.5) ────────────
+        # ── MTP speculative weights (only supports Qwen3.5) ───────────
         echo ""
         if [ "$HYBRID_PRESET" = "custom" ]; then
-            warn "MTP speculative decoding: script add-mtp-weights.py chỉ test với Qwen3.5."
-            warn "Với model khác có thể lỗi hoặc không có tác dụng."
+            warn "MTP speculative decoding: add-mtp-weights.py script is only tested with Qwen3.5."
+            warn "Other models may encounter errors or see no effect."
         fi
-        read -p "Thêm MTP speculative decoding weights? (${DEF_MTP}/$([ "$DEF_MTP" = "y" ] && echo N || echo Y)): " DO_MTP
+        read -p "Add MTP speculative decoding weights? (${DEF_MTP}/$([ "$DEF_MTP" = "y" ] && echo N || echo Y)): " DO_MTP
         DO_MTP=${DO_MTP:-$DEF_MTP}
 
         if [[ "$DO_MTP" =~ ^[Yy]$ ]]; then
             if [ -f "$HYBRID_OUT/model_extra_tensors.safetensors" ] \
                && grep -q '"mtp\.' "$HYBRID_OUT/model.safetensors.index.json" 2>/dev/null; then
-                info "MTP weights đã có — bỏ qua"
+                info "MTP weights already present — skipping"
             elif [ -n "$INTEL_DIR" ] && [ -d "$INTEL_DIR" ] \
                && [ -f "$INTEL_DIR/model_extra_tensors.safetensors" ]; then
-                # Cách cũ: Intel model có sẵn file riêng (35B, 122B)
-                info "Thêm MTP weights từ Intel INT4 source..."
+                # Old way: Intel model has separate file (35B, 122B)
+                info "Adding MTP weights from Intel INT4 source..."
                 python "$REPO_DIR/patches/02-mtp-speculative/add-mtp-weights.py" \
                     --source "$INTEL_DIR" \
                     --target "$HYBRID_OUT"
-                info "MTP xong"
+                info "MTP done"
             else
-                # Cách mới: extract MTP từ FP8 source (27B, custom model)
-                warn "Intel INT4 không có model_extra_tensors — extract từ FP8 source..."
+                # New way: extract MTP from FP8 source (27B, custom model)
+                warn "Intel INT4 has no model_extra_tensors — extracting from FP8 source..."
                 python "$REPO_DIR/patches/02-mtp-speculative/add-mtp-from-fp8.py" \
                     --fp8-repo "$FP8_REPO" \
                     --target "$HYBRID_OUT"
-                info "MTP xong (từ FP8 source)"
+                info "MTP done (from FP8 source)"
             fi
         else
-            info "Bỏ qua MTP"
+            info "Skipping MTP"
         fi
 
         # ── Docker image ─────────────────────────────────────────────
         if $HAVE_DOCKER || docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
-            info "Docker image vllm-qwen35-v2 đã có — bỏ qua build"
+            info "Docker image vllm-qwen35-v2 already exists — skipping build"
         else
-            warn "Docker image chưa có. Cần cài 122B trước để build image."
-            warn "Chạy option 1 → chọn 1 (122B) trước."
+            warn "Docker image not found. You need to install 122B first to build the image."
+            warn "Run option 1 → select 1 (122B) first."
         fi
 
-        info "$OUT_NAME sẵn sàng! Chạy option 2 → chọn model để khởi động."
+        info "$OUT_NAME ready! Run option 2 → select model to start."
     fi
 
-    info "Cài đặt hoàn tất!"
+    info "Installation complete!"
     exit 0
 fi
 
@@ -282,39 +282,39 @@ fi
 if [ "$MENU_CHOICE" = "6" ]; then
     step "Rebuild Docker image"
     if [ ! -d "$REPO_DIR" ]; then
-        error "Chưa cài đặt. Chạy option 1 trước."
+        error "Not installed. Run option 1 first."
         exit 1
     fi
     cd "$REPO_DIR"
-    warn "Rebuild với --no-cache, mất ~60-90 phút..."
+    warn "Rebuilding with --no-cache, takes ~60-90 minutes..."
     ./install.sh --no-cache
     exit 0
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# OPTION 3: DỪNG SERVER
+# OPTION 3: STOP SERVER
 # ═══════════════════════════════════════════════════════════════════
 if [ "$MENU_CHOICE" = "3" ]; then
-    step "Dừng server"
+    step "Stop server"
     if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
         docker stop "$CONTAINER_NAME" && docker rm "$CONTAINER_NAME"
-        info "Đã dừng container $CONTAINER_NAME"
+        info "Container stopped: $CONTAINER_NAME"
     else
-        warn "Container $CONTAINER_NAME không đang chạy"
+        warn "Container $CONTAINER_NAME is not running"
     fi
     exit 0
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# OPTION 4: XEM LOGS
+# OPTION 4: VIEW LOGS
 # ═══════════════════════════════════════════════════════════════════
 if [ "$MENU_CHOICE" = "4" ]; then
     step "Logs"
     if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
         docker logs "$CONTAINER_NAME" --tail 50 -f
     else
-        warn "Container chưa chạy. Xem log lần cuối:"
-        docker logs "$CONTAINER_NAME" --tail 50 2>/dev/null || echo "Không có log"
+        warn "Container not running. Showing last logs:"
+        docker logs "$CONTAINER_NAME" --tail 50 2>/dev/null || echo "No logs available"
     fi
     exit 0
 fi
@@ -326,15 +326,15 @@ if [ "$MENU_CHOICE" = "5" ]; then
     step "Benchmark"
 
     if ! curl -sf "$HEALTH_URL" &>/dev/null; then
-        error "Server chưa chạy hoặc chưa sẵn sàng tại $HEALTH_URL"
+        error "Server not running or not ready at $HEALTH_URL"
         exit 1
     fi
 
-    # Auto-detect model name từ API
+    # Auto-detect model name from API
     BENCH_MODEL=$(curl -sf http://localhost:8000/v1/models \
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null || echo "")
     if [ -z "$BENCH_MODEL" ]; then
-        error "Không lấy được model name từ /v1/models"
+        error "Could not retrieve model name from /v1/models"
         exit 1
     fi
     info "Model: $BENCH_MODEL"
@@ -342,7 +342,7 @@ if [ "$MENU_CHOICE" = "5" ]; then
     API="http://localhost:8000/v1/chat/completions"
     TMPDIR_BENCH=$(mktemp -d)
 
-    # Hàm bench 1 request, ghi kết quả ra file
+    # Benchmark a single request, write result to file
     _bench_one() {
         local label="$1" prompt="$2" max_tokens="$3" outfile="$4"
         local start end elapsed completion_tokens tps
@@ -414,9 +414,9 @@ if [ "$MENU_CHOICE" = "5" ]; then
         echo ""
     done
 
-    # ── Concurrent benchmark (N requests song song) ───────────────
-    echo "── Concurrent (4 requests song song) ──────────────────"
-    echo "  Gửi 4 request cùng lúc, đo tổng throughput..."
+    # ── Concurrent benchmark (N requests in parallel) ───────────────
+    echo "── Concurrent (4 parallel requests) ───────────────────────────"
+    echo "  Sending 4 requests simultaneously, measuring total throughput..."
     echo ""
 
     PROMPT_CONC="Write a complete Python implementation of a REST API using FastAPI with full CRUD operations, authentication middleware, and database models."
@@ -452,8 +452,8 @@ if [ "$MENU_CHOICE" = "5" ]; then
         _conc_wall=$(echo "scale=2; $_conc_elapsed / 1000" | bc)
         _conc_total_tps=$(echo "scale=1; $_conc_total_tokens * 1000 / $_conc_elapsed" | bc 2>/dev/null || echo "N/A")
         echo ""
-        printf "  Tổng: %s tokens trong %ss\n" "$_conc_total_tokens" "$_conc_wall"
-        printf "  ${GREEN}Tổng throughput: %s tok/s${NC} (%s requests hoàn thành)\n" "$_conc_total_tps" "$_conc_ok"
+        printf "  Total: %s tokens in %ss\n" "$_conc_total_tokens" "$_conc_wall"
+        printf "  ${GREEN}Total throughput: %s tok/s${NC} (%s requests completed)\n" "$_conc_total_tps" "$_conc_ok"
     fi
 
     rm -rf "$TMPDIR_BENCH"
@@ -462,18 +462,18 @@ if [ "$MENU_CHOICE" = "5" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════
-# OPTION 2: CHỌN MODEL VÀ KHỞI ĐỘNG
+# OPTION 2: SELECT MODEL AND START
 # ═══════════════════════════════════════════════════════════════════
 if [ "$MENU_CHOICE" = "2" ]; then
 
-    # ─── Tìm model ───────────────────────────────────────────────
-    step "Tìm model"
+    # ─── Find model ────────────────────────────────────────────────
+    step "Scanning models"
 
     HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub"
 
-    # Scan tất cả hybrid model trong ~/models/
-    # - 122B: tên chứa "122b"
-    # - Còn lại: tất cả thư mục có model.safetensors.index.json + tên có "hybrid|int4fp8"
+    # Scan all hybrid models in ~/models/
+    # - 122B: name contains "122b"
+    # - Others: all folders with model.safetensors.index.json + name contains "hybrid|int4fp8"
     LOCAL_HYBRID_SMALL_LIST=()   # 35B, 27B, custom, ...
     LOCAL_HYBRID_122B=""
     for d in "$HOME/models"/*/; do
@@ -487,7 +487,7 @@ if [ "$MENU_CHOICE" = "2" ]; then
     done
     LOCAL_HYBRID_SMALL=""
     [ "${#LOCAL_HYBRID_SMALL_LIST[@]}" -gt 0 ] && LOCAL_HYBRID_SMALL="${LOCAL_HYBRID_SMALL_LIST[0]}"
-    # Compat alias cho code bên dưới
+    # Compat alias for code below
     LOCAL_HYBRID_35B_LIST=("${LOCAL_HYBRID_SMALL_LIST[@]}")
     LOCAL_HYBRID_35B="$LOCAL_HYBRID_SMALL"
 
@@ -499,7 +499,7 @@ if [ "$MENU_CHOICE" = "2" ]; then
 
     # Build labels
     if [ "${#LOCAL_HYBRID_SMALL_LIST[@]}" -eq 0 ]; then
-        L_SMALL="Hybrid (small)             — chưa có, chạy option 1 để build"
+        L_SMALL="Hybrid (small)             — not found, run option 1 to build"
     else
         _SMALL_NAMES=""
         for _p in "${LOCAL_HYBRID_SMALL_LIST[@]}"; do
@@ -509,49 +509,49 @@ if [ "$MENU_CHOICE" = "2" ]; then
         L_SMALL="Hybrid (small)             ✓ ${_SMALL_NAMES}"
     fi
 
-    L122H="Qwen3.5-122B-A10B Hybrid v2  [~51 tok/s]  ★ — cần build"
+    L122H="Qwen3.5-122B-A10B Hybrid v2  [~51 tok/s]  ★ — needs build"
     [ -n "$LOCAL_HYBRID_122B" ] && L122H="Qwen3.5-122B-A10B Hybrid v2  [~51 tok/s]  ★ ✓ local: $(basename $LOCAL_HYBRID_122B)"
 
     # Menu
     echo ""
-    echo "=== Model khả dụng ==="
+    echo "=== Available models ==="
     echo ""
     echo "  ── Hybrid small (35B / 27B / custom) ───────────────────────"
     echo "  1. $L_SMALL"
     echo ""
-    echo "  ── 122B-A10B (chất lượng cao hơn) ─────────────────────────"
+    echo "  ── 122B-A10B (higher quality) ──────────────────────────────"
     echo "  2. $L122H"
     echo ""
-    echo "  3. Nhập model ID / path thủ công"
+    echo "  3. Enter model ID / path manually"
     echo ""
-    read -p "Chọn model (1-3): " MODEL_CHOICE
+    read -p "Select model (1-3): " MODEL_CHOICE
 
     case "$MODEL_CHOICE" in
         1)
-            # 35B Hybrid — cho chọn nếu có nhiều bản
+            # 35B Hybrid — allow selection if multiple versions found
             if [ "${#LOCAL_HYBRID_35B_LIST[@]}" -gt 1 ]; then
                 echo ""
-                echo "=== Chọn bản 35B Hybrid ==="
+                echo "=== Select 35B Hybrid version ==="
                 for i in "${!LOCAL_HYBRID_35B_LIST[@]}"; do
                     echo "  $((i+1)). $(basename ${LOCAL_HYBRID_35B_LIST[$i]})"
                 done
                 echo ""
-                read -p "Chọn (1-${#LOCAL_HYBRID_35B_LIST[@]}): " V35
+                read -p "Select (1-${#LOCAL_HYBRID_35B_LIST[@]}): " V35
                 V35=$((${V35:-1} - 1))
                 MODEL_ID="${LOCAL_HYBRID_35B_LIST[$V35]:-${LOCAL_HYBRID_35B_LIST[0]}}"
-                info "Dùng: $MODEL_ID"
+                info "Using: $MODEL_ID"
             elif [ -n "$LOCAL_HYBRID_35B" ]; then
                 MODEL_ID="$LOCAL_HYBRID_35B"
-                info "Dùng hybrid local: $MODEL_ID"
+                info "Using local hybrid: $MODEL_ID"
             elif $HF_HAS_35B_AR; then
                 AR35_DIR=$(find "$HF_CACHE/models--Intel--Qwen3.5-35B-A3B-int4-AutoRound/snapshots" \
                     -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
                 MODEL_ID="$AR35_DIR"
-                warn "Chưa có hybrid 35B — dùng AutoRound thuần (~75 tok/s)"
-                warn "Build hybrid: option 1 → chọn 35B"
+                warn "No hybrid 35B found — using pure AutoRound (~75 tok/s)"
+                warn "Build hybrid: option 1 → select 35B"
             else
                 MODEL_ID="Intel/Qwen3.5-35B-A3B-int4-AutoRound"
-                warn "Sẽ tải Intel/Qwen3.5-35B-A3B-int4-AutoRound (~18GB)"
+                warn "Will download Intel/Qwen3.5-35B-A3B-int4-AutoRound (~18GB)"
             fi
             USE_HYBRID=true; QUANT="autoround"; MTP_TOKENS=2; MODEL_SIZE="35B"
             ;;
@@ -559,35 +559,35 @@ if [ "$MENU_CHOICE" = "2" ]; then
             # 122B Hybrid v2
             if [ -n "$LOCAL_HYBRID_122B" ]; then
                 MODEL_ID="$LOCAL_HYBRID_122B"
-                info "Dùng hybrid local: $MODEL_ID"
+                info "Using local hybrid: $MODEL_ID"
             elif $HF_HAS_122B_AR; then
                 AR122_DIR=$(find "$HF_CACHE/models--Intel--Qwen3.5-122B-A10B-int4-AutoRound/snapshots" \
                     -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
                 MODEL_ID="$AR122_DIR"
-                warn "Chưa có hybrid — dùng AutoRound thuần (~38 tok/s). Chạy install.sh để build hybrid."
+                warn "No hybrid found — using pure AutoRound (~38 tok/s). Run install.sh to build hybrid."
             else
                 MODEL_ID="Intel/Qwen3.5-122B-A10B-int4-AutoRound"
-                warn "Chạy option 1 (Cài đặt) trước để tải và build hybrid tự động."
+                warn "Run option 1 (Install) first to auto-download and build the hybrid."
             fi
             USE_HYBRID=true; QUANT="autoround"; MTP_TOKENS=2; MODEL_SIZE="122B"
             ;;
         3)
-            read -p "Nhập model HF ID hoặc path local: " MODEL_ID
+            read -p "Enter HF model ID or local path: " MODEL_ID
             USE_HYBRID=false; QUANT=""; MTP_TOKENS=0; MODEL_SIZE="custom"
             ;;
         *)
-            error "Lựa chọn không hợp lệ"; exit 1
+            error "Invalid selection"; exit 1
             ;;
     esac
 
     info "Model: $MODEL_ID"
 
-    # ─── Cấu hình ────────────────────────────────────────────────
-    step "Cấu hình server"
-    echo "(Enter = dùng giá trị mặc định)"
+    # ─── Configuration ─────────────────────────────────────────────
+    step "Server configuration"
+    echo "(Press Enter to use default values)"
     echo ""
 
-    # Defaults theo model size
+    # Defaults based on model size
     if [ "${MODEL_SIZE:-}" = "122B" ] && [ "${USE_HYBRID:-false}" = true ]; then
         DEF_CTX=262144; DEF_GPU_UTIL=0.90; USE_FLASHINFER=true
     else
@@ -618,14 +618,14 @@ if [ "$MENU_CHOICE" = "2" ]; then
     read -p "Thinking mode (yes/no) [yes]: " THINKING
     THINKING=${THINKING:-yes}
 
-    read -p "Vision encoder (yes/no) [no — tiết kiệm RAM]: " USE_VISION
+    read -p "Vision encoder (yes/no) [no — saves RAM]: " USE_VISION
     USE_VISION=${USE_VISION:-no}
 
     read -p "Tensor parallel size [1]: " TP_SIZE
     TP_SIZE=${TP_SIZE:-1}
 
     echo ""
-    echo -e "${BOLD}=== Cấu hình ==="
+    echo -e "${BOLD}=== Configuration ==="
     echo "  Model        : $MODEL_ID"
     echo "  Port         : $PORT"
     echo "  Context      : $CTX_LEN"
@@ -636,26 +636,26 @@ if [ "$MENU_CHOICE" = "2" ]; then
     echo "  TP size      : $TP_SIZE"
     [ "$USE_HYBRID" = true ] && echo "  Hybrid FP8   : $HYBRID_FP8"
     echo -e "${NC}"
-    read -p "Tiếp tục? (Y/n): " CONFIRM
+    read -p "Continue? (Y/n): " CONFIRM
     CONFIRM=${CONFIRM:-Y}
     [[ ! "$CONFIRM" =~ ^[Yy]$ ]] && exit 0
 
-    # ─── Flush cache trước khi start ─────────────────────────────
-    step "Chuẩn bị hệ thống"
-    warn "Flush memory cache..."
+    # ─── Flush cache before start ──────────────────────────────────
+    step "Preparing system"
+    warn "Flushing memory cache..."
     sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
-    info "Cache đã flush"
+    info "Cache flushed"
 
-    # Dừng và xóa container cũ (dù đang chạy hay đã chết)
+    # Stop and remove old container (whether running or dead)
     if docker ps -aq -f name="^${CONTAINER_NAME}$" | grep -q .; then
-        warn "Dọn container cũ..."
+        warn "Removing old container..."
         docker stop "$CONTAINER_NAME" 2>/dev/null || true
         docker rm "$CONTAINER_NAME"
     fi
 
-    # ─── Fallback: Chạy Docker thủ công ─────────────────────────
-    # ─── Khởi động Docker ────────────────────────────────────────
-    step "Khởi động Docker"
+    # ─── Fallback: Run Docker manually ────────────────────────────
+    # ─── Start Docker ──────────────────────────────────────────────
+    step "Starting Docker"
     if true; then
 
         # Build vLLM args
@@ -685,18 +685,18 @@ if [ "$MENU_CHOICE" = "2" ]; then
         # HF cache mount
         HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
 
-        # Chọn Docker image: dùng vllm-qwen35-v2 nếu có (có hybrid FP8 patch)
-        # vllm-qwen35-v2 dùng `vllm` CLI entrypoint → cần subcommand "serve"
-        # vllm/vllm-openai:latest dùng python entrypoint trực tiếp → không cần
+        # Select Docker image: use vllm-qwen35-v2 if available (has hybrid FP8 patch)
+        # vllm-qwen35-v2 uses `vllm` CLI entrypoint → needs subcommand "serve"
+        # vllm/vllm-openai:latest uses python entrypoint directly → no need
         DOCKER_IMAGE="vllm/vllm-openai:latest"
         VLLM_CMD_PREFIX=""
         if [ "${USE_HYBRID:-false}" = true ] && docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
             DOCKER_IMAGE="vllm-qwen35-v2"
             VLLM_CMD_PREFIX="serve"
-            info "Dùng image vllm-qwen35-v2 (có hybrid FP8 dispatch patch)"
+            info "Using image vllm-qwen35-v2 (with hybrid FP8 dispatch patch)"
         fi
 
-        # Mount local model path nếu MODEL_ID là đường dẫn local (bắt đầu bằng /)
+        # Mount local model path if MODEL_ID is a local path (starts with /)
         LOCAL_MODEL_MOUNT=""
         MODEL_ID_DOCKER="$MODEL_ID"
         if [[ "$MODEL_ID" == /* ]]; then
@@ -721,18 +721,18 @@ if [ "$MENU_CHOICE" = "2" ]; then
             $VLLM_CMD_PREFIX $VLLM_ARGS"
 
         echo ""
-        echo "Lệnh Docker:"
+        echo "Docker command:"
         echo "$DOCKER_CMD"
         echo ""
 
         eval "$DOCKER_CMD"
-        info "Container đã start: $CONTAINER_NAME"
+        info "Container started: $CONTAINER_NAME"
     fi
 
     # ─── Poll health ─────────────────────────────────────────────
-    step "Đợi model load"
-    warn "Lần đầu: ~13 phút | Lần sau: ~5-7 phút"
-    warn "Ctrl+C để thoát (container vẫn chạy nền)"
+    step "Waiting for model to load"
+    warn "First time: ~13 min | Subsequent: ~5-7 min"
+    warn "Ctrl+C to exit (container keeps running in background)"
     echo ""
 
     ELAPSED=0
@@ -740,32 +740,32 @@ if [ "$MENU_CHOICE" = "2" ]; then
     while true; do
         if curl -sf "$HEALTH_URL" &>/dev/null; then
             echo ""
-            info "Server sẵn sàng! Endpoint: http://localhost:$PORT/v1"
+            info "Server ready! Endpoint: http://localhost:$PORT/v1"
             break
         fi
-        # Kiểm tra container còn sống không
+        # Check if container is still alive
         if ! docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
             echo ""
-            error "Container đã chết. Xem log:"
+            error "Container crashed. Check logs:"
             docker logs "$CONTAINER_NAME" --tail 30 2>/dev/null || true
             exit 1
         fi
         ELAPSED=$((ELAPSED + INTERVAL))
         MINS=$((ELAPSED / 60))
         SECS=$((ELAPSED % 60))
-        printf "\r  [%02d:%02d] Đang load..." "$MINS" "$SECS"
+        printf "\r  [%02d:%02d] Loading..." "$MINS" "$SECS"
         sleep $INTERVAL
     done
 
     echo ""
-    echo -e "${BOLD}${GREEN}✓ Sẵn sàng!${NC}"
+    echo -e "${BOLD}${GREEN}✓ Ready!${NC}"
     echo ""
     echo "  API  : http://localhost:$PORT/v1"
     echo "  Chat : curl http://localhost:$PORT/v1/chat/completions \\"
     echo "           -H 'Content-Type: application/json' \\"
     echo "           -d '{\"model\":\"$MODEL_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":100}'"
     echo ""
-    echo "  Benchmark: $0 → chọn option 5"
-    echo "  Logs     : $0 → chọn option 4"
+    echo "  Benchmark: $0 → select option 5"
+    echo "  Logs     : $0 → select option 4"
 
 fi

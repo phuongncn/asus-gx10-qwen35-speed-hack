@@ -1,0 +1,47 @@
+# Claude / AI tooling
+.plan/
+.claude/
+.roo/
+.roomodes
+.clinerules
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs
+*.log
+logs/
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+*.pid
+
+# Temp
+tmp/
+temp/
