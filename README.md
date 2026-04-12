@@ -1,15 +1,16 @@
 # ASUS GX10 / DGX Spark — Qwen3.5 Speed Hack 🚀
 
-> **35B: 30 t/s → 112+ t/s | 122B: 10 t/s → 51 t/s**  
-> One shell script. No deep-learning expertise required.
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Docker](https://img.shields.io/badge/Docker-Required-blue)
+![Hardware](https://img.shields.io/badge/Hardware-ASUS_GX10_|_DGX_Spark-green)
 
-## The Story
-
-I bought an ASUS GX10 (NVIDIA DGX Spark) with 128GB unified GPU memory, hoping to run Qwen3.5-122B locally. Initial benchmarks with Ollama gave ~10 tok/s — painfully slow. llama.cpp improved it to ~30 tok/s, but I wanted more.
-
-Then I discovered albond's hybrid INT4+FP8 technique, which merges Intel's quantized weights with Qwen's FP8 releases. Combined with MTP (Multi-Token Prediction) speculative decoding, I achieved **51 tok/s for 122B** and **112+ tok/s for 35B** — a 4-5x speedup over baseline.
-
-This repo automates the entire pipeline: hybrid checkpoint building, MTP weight injection, Docker containerization with patched vLLM, and interactive benchmarking — all in one shell script.
+> Unzip a **4-5x speedup** for Qwen3.5 on your ASUS GX10 unified memory architecture. 
+> Runs hybrid INT4+FP8 and MTP speculative decoding in a single, automated shell script.
+>
+> ⚡ **35B:** `70 t/s ➔ 112+ t/s`
+> ⚡ **122B:** `30 t/s ➔ 51 t/s`
+>
+> *Zero deep-learning expertise required. Just clone, click, and fly.*
 
 ## What This Does
 
@@ -17,6 +18,16 @@ This repo automates the entire pipeline: hybrid checkpoint building, MTP weight 
 - Adds MTP (Multi-Token Prediction) speculative decoding weights
 - Runs everything inside Docker with patched vLLM (FlashInfer 0.6.7, FP8 dispatch fix)
 - Interactive menu: install → start → benchmark — no Docker expertise needed
+
+## Quick Start
+
+```bash
+wget https://raw.githubusercontent.com/phuongncn/asus-gx10-qwen35-speed-hack/main/vllm.sh
+chmod +x vllm.sh
+./vllm.sh
+```
+
+Then select **1** (Install) → choose your model → select **2** (Start server).
 
 ## Benchmark Results
 
@@ -34,8 +45,8 @@ This repo automates the entire pipeline: hybrid checkpoint building, MTP weight 
 ### Speed comparison
 | Model | Before | After | Method |
 |-------|--------|-------|--------|
-| Qwen3.5-35B  | ~30 t/s (Ollama) / 72 t/s (llama.cpp) | **112+ t/s** | Hybrid INT4+FP8 + MTP |
-| Qwen3.5-122B | ~10 t/s (Ollama) / 30 t/s (llama.cpp) | **51 t/s**   | Hybrid INT4+FP8 + MTP |
+| Qwen3.5-35B  | ~70 t/s | **112+ t/s** | Hybrid INT4+FP8 + MTP |
+| Qwen3.5-122B | ~30 t/s | **51 t/s**   | Hybrid INT4+FP8 + MTP |
 | Qwen3.5-27B  | ~10 t/s | **24 t/s** | Hybrid INT4+FP8 |
 
 ## Hardware
@@ -49,16 +60,7 @@ This repo automates the entire pipeline: hybrid checkpoint building, MTP weight 
 - `nvidia-smi` accessible
 - ~100GB free disk (for 35B: ~20GB, for 122B: ~150GB)
 - HuggingFace account (free) for model downloads
-
-## Quick Start
-
-```bash
-wget https://raw.githubusercontent.com/phuongncn/asus-gx10-qwen35-speed-hack/main/vllm.sh
-chmod +x vllm.sh
-./vllm.sh
-```
-
-Then select **1** (Install) → choose your model → select **2** (Start server).
+- *(Note: This uses almost all of the 128GB unified memory for the 122B model, ensure no other heavy applications are running)*
 
 ## Menu Options
 
@@ -78,6 +80,14 @@ Then select **1** (Install) → choose your model → select **2** (Start server
 | Qwen3.5-35B-A3B | `Intel/Qwen3.5-35B-A3B-int4-AutoRound` | `Qwen/Qwen3.5-35B-A3B-FP8` | ~112 tok/s |
 | Qwen3.5-122B-A10B | `Intel/Qwen3.5-122B-A10B-int4-AutoRound` | *(via install.sh)* | ~51 tok/s |
 | Any AutoRound INT4 | Custom HF repo | Custom FP8 HF repo | varies |
+
+## The Story
+
+I bought an ASUS GX10 (NVIDIA DGX Spark) with 128GB unified GPU memory, hoping to run Qwen3.5-122B locally. Initial benchmarks gave ~30 tok/s, but I wanted more.
+
+Then I discovered albond's hybrid INT4+FP8 technique, which merges Intel's quantized weights with Qwen's FP8 releases. Combined with MTP (Multi-Token Prediction) speculative decoding, I achieved **51 tok/s for 122B** and **112+ tok/s for 35B** — a 4-5x speedup over baseline.
+
+This repo automates the entire pipeline: hybrid checkpoint building, MTP weight injection, Docker containerization with patched vLLM, and interactive benchmarking — all in one shell script.
 
 ## How It Works (Technical)
 

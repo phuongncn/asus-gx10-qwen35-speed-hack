@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
 #  vllm.sh — Qwen3.5-122B-A10B/35B Hybrid INT4+FP8 on ASUS GX10
-#  Pipeline v2: ~51-55 tok/s | MTP-2 | FlashInfer 0.6.7
+#  Pipeline v2: ~51/~112 tok/s | MTP-2 | FlashInfer 0.6.7
 #  Reference: github.com/albond/DGX_Spark_Qwen3.5-122B-A10B-AR-INT4
 # ═══════════════════════════════════════════════════════════════════
 
