@@ -72,10 +72,15 @@ case "$MENU_CHOICE" in
         warn "This will rebuild the vllm-qwen35-v2 Docker image from scratch."
         warn "Takes 60-90 minutes. The existing image will be replaced."
         echo ""
+        warn "⚠  WARNING: install.sh --no-cache DELETES existing images BEFORE rebuilding."
+        warn "   If you Ctrl+C mid-build, both vllm-sm121 and vllm-qwen35-v2 will be gone"
+        warn "   and the server will fall back to vllm/vllm-openai:latest (fails on GB10)."
+        warn "   Do NOT interrupt this process once started."
+        echo ""
         read -p "Continue? (y/N): " _CONFIRM_REBUILD
         [[ ! "$_CONFIRM_REBUILD" =~ ^[Yy]$ ]] && { info "Cancelled."; exit 0; }
         cd "$REPO_DIR"
-        warn "Rebuilding with --no-cache..."
+        warn "Rebuilding with --no-cache... Do NOT Ctrl+C!"
         ./install.sh --no-cache
         ;;
     7) bash "$SCRIPT_DIR/scripts/build-hybrid.sh" ;;

@@ -237,7 +237,7 @@ HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
 #   vllm-sm121      → FP8 native or any model needing SM121 (Blackwell/GB10)
 #   vllm/vllm-openai:latest → fallback, compiled for SM8.x/9.0 (NOT for GB10)
 # Both vllm-qwen35-v2 and vllm-sm121 use `vllm serve` CLI entrypoint
-DOCKER_IMAGE="vllm/vllm-openai:latest"
+DOCKER_IMAGE=""
 VLLM_CMD_PREFIX=""
 if [ "${USE_HYBRID:-false}" = true ] && [ "${QUANT:-}" = "autoround" ] && docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
     DOCKER_IMAGE="vllm-qwen35-v2"
@@ -250,7 +250,12 @@ elif docker image inspect vllm-sm121:latest >/dev/null 2>&1; then
     VLLM_ARGS="$VLLM_ARGS --load-format fastsafetensors"
     info "Using image vllm-sm121 (SM121/Blackwell native, fastsafetensors)"
 else
-    warn "vllm-sm121 not found — falling back to vllm/vllm-openai:latest (may fail on GB10)"
+    echo ""
+    error "Required Docker image not found (vllm-qwen35-v2 or vllm-sm121)."
+    error "vllm/vllm-openai:latest will NOT work on GB10 (SM 12.1 — no proper CUDA support)."
+    echo ""
+    warn  "Run option 1 (First-time setup) to build the required images (~60-90 min)."
+    exit 1
 fi
 
 # Mount local model path if MODEL_ID is a local path (starts with /)
