@@ -22,15 +22,8 @@ if ! command -v nvidia-smi &>/dev/null; then
     error "nvidia-smi not found"
     exit 1
 fi
-GPU_MEM_RAW=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
-if [[ "$GPU_MEM_RAW" =~ ^[0-9]+$ ]]; then
-    info "GPU memory: ${GPU_MEM_RAW} MiB ($(( GPU_MEM_RAW / 1024 )) GB)"
-    if [ "$GPU_MEM_RAW" -lt 100000 ]; then
-        warn "GPU RAM < 100GB — 122B model may not load"
-    fi
-else
-    warn "Could not read GPU memory info (${GPU_MEM_RAW:-empty})"
-fi
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs)
+[ -n "$GPU_NAME" ] && info "GPU: $GPU_NAME" || warn "Could not detect GPU"
 
 # ─── Docker image check ──────────────────────────────────────────
 _HAS_V2=false;  _HAS_SM121=false
@@ -40,15 +33,9 @@ docker image inspect vllm-sm121:latest      >/dev/null 2>&1 && _HAS_SM121=true
 if $_HAS_V2 && $_HAS_SM121; then
     info "Docker images: vllm-qwen35-v2 ✓  vllm-sm121 ✓"
 elif $_HAS_V2; then
-    info  "Docker images: vllm-qwen35-v2 ✓"
-    warn  "vllm-sm121 not found — FP8-native models will use vllm/vllm-openai:latest (may fail on GB10)"
-    warn  "Rebuild: option 1 → install 122B, or option 6 to rebuild images"
+    info "Docker images: vllm-qwen35-v2 ✓  vllm-sm121 ✗"
 elif $_HAS_SM121; then
-    info  "Docker images: vllm-sm121 ✓"
-    warn  "vllm-qwen35-v2 not found — Hybrid INT4+FP8 models will use vllm-sm121 (no autoround patch)"
-    warn  "Rebuild: option 6 to rebuild images"
+    info "Docker images: vllm-sm121 ✓  vllm-qwen35-v2 ✗"
 else
-    warn  "Neither vllm-qwen35-v2 nor vllm-sm121 found!"
-    warn  "Will fall back to vllm/vllm-openai:latest — this WILL FAIL on GB10 (no SM121 support)"
-    warn  "Fix: run option 1 (First-time setup) or option 6 (Rebuild Docker image)"
+    warn "Docker images not built yet — see option 1 in the menu below"
 fi

@@ -22,9 +22,19 @@ source "$SCRIPT_DIR/scripts/common.sh"
 # ─── Environment check ───────────────────────────────────────────
 bash "$SCRIPT_DIR/scripts/env-check.sh"
 
+# ─── Check image status for menu display ─────────────────────────
+_MENU_HAS_V2=false; _MENU_HAS_SM121=false
+docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1 && _MENU_HAS_V2=true
+docker image inspect vllm-sm121:latest     >/dev/null 2>&1 && _MENU_HAS_SM121=true
+
 # ─── Main menu ───────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}=== vLLM Manager for ASUS GX10 ===${NC}"
+echo ""
+if ! $_MENU_HAS_V2 && ! $_MENU_HAS_SM121; then
+    echo -e "  ${YELLOW}Getting started? Run option 1 first to set up the server (one-time, ~60-90 min).${NC}"
+    echo ""
+fi
 echo "  1. First-time setup  → [122B / 35B Hybrid / 35B FP8+MTP / Custom / Both]"
 echo "  2. Select model and start server"
 echo "  3. Stop server"
