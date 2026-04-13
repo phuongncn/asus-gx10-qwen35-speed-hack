@@ -47,8 +47,9 @@ I gave albond 10 stars on GitHub (by starring and unstarring repeatedly — he t
 ## Quick Start
 
 ```bash
-wget https://raw.githubusercontent.com/phuongncn/asus-gx10-qwen35-speed-hack/main/vllm.sh
-chmod +x vllm.sh
+git clone https://github.com/phuongncn/asus-gx10-qwen35-speed-hack
+cd asus-gx10-qwen35-speed-hack
+chmod +x vllm.sh scripts/*.sh
 ./vllm.sh
 ```
 
@@ -125,13 +126,33 @@ Then select **1** (Install) → choose your model → select **2** (Start server
 
 | Option | Description |
 |--------|-------------|
-| 1 | First-time setup: clone repo, build Docker, download + build hybrid model |
+| 1 | First-time setup: clone repo, build Docker, download + build model (submenu: 122B / 35B Hybrid / 35B FP8+MTP / Custom / Both) |
 | 2 | Select model and start vLLM server |
-| 3 | Native FP8 + MTP: download FP8 model + add MTP weights (better quality, ~35GB) |
-| 4 | Stop server |
-| 5 | View logs |
-| 6 | Run benchmark |
-| 7 | Rebuild Docker image (no-cache) |
+| 3 | Stop server |
+| 4 | View logs |
+| 5 | Run benchmark |
+| 6 | Rebuild Docker image (--no-cache) |
+| 7 | Build checkpoint (submenu: Hybrid INT4+FP8 / Native FP8+MTP) — no Docker rebuild, skips download if already present |
+
+## Project Structure
+
+```
+vllm.sh                  ← entry point / menu router
+scripts/
+  common.sh              ← shared vars, color helpers (sourced by others)
+  env-check.sh           ← docker + GPU validation
+  install.sh             ← option 1: download, build hybrid/FP8 checkpoint
+  build-hybrid.sh        ← option 7: build hybrid INT4+FP8 or native FP8+MTP checkpoint
+  start-server.sh        ← option 2: model selection + docker run + health poll
+  benchmark.sh           ← option 5: sequential + concurrent benchmark
+  add-mtp-from-fp8.py   ← extracts MTP weights from FP8 source when INT4 has none
+```
+
+Each script can also be run standalone:
+```bash
+bash scripts/benchmark.sh 8000        # benchmark against port 8000
+bash scripts/install.sh               # run install without menu wrapper
+```
 
 ## Supported Models
 
@@ -145,7 +166,7 @@ Then select **1** (Install) → choose your model → select **2** (Start server
 ## How It Works (Technical)
 
 1. **Hybrid checkpoint**: Takes Intel's INT4 AutoRound weights + Qwen's FP8 weights → merges expert layers (INT4) with attention layers (FP8) using albond's `build-hybrid-checkpoint.py`
-2. **MTP weights**: Injects Multi-Token Prediction speculative decoding tensors → +15-25% speed on top of hybrid
+2. **MTP weights**: Injects Multi-Token Prediction speculative decoding tensors → +15-25% speed on top of hybrid. Source is INT4 model's `model_extra_tensors.safetensors` when available; otherwise extracted directly from the FP8 source via `add-mtp-from-fp8.py`
 3. **Patched vLLM**: Custom Docker image with FlashInfer 0.6.7 + FP8 dispatch fix required for hybrid to work correctly
 4. **Memory flush**: Drops OS page cache before loading for maximum available VRAM
 
