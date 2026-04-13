@@ -91,7 +91,7 @@ case "$MENU_CHOICE" in
         [[ ! "$_CONFIRM_REBUILD" =~ ^[Yy]$ ]] && { info "Cancelled."; exit 0; }
         cd "$REPO_DIR"
         warn "Rebuilding with --no-cache... Do NOT Ctrl+C!"
-        ./install.sh --no-cache
+        ./install.sh --no-cache --no-launch
         ;;
     7) bash "$SCRIPT_DIR/scripts/build-hybrid.sh" ;;
     *) error "Invalid selection"; exit 1 ;;
