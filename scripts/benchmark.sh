@@ -100,15 +100,16 @@ for RUN in 1 2; do
 done
 
 # ── Concurrent benchmark (N requests in parallel) ───────────────
-echo "── Concurrent (4 parallel requests) ───────────────────────────"
-echo "  Sending 4 requests simultaneously, measuring total throughput..."
+CONCURRENCY="${CONCURRENCY:-4}"
+echo "── Concurrent ($CONCURRENCY parallel requests) ───────────────────────────"
+echo "  Sending $CONCURRENCY requests simultaneously, measuring total throughput..."
 echo ""
 
 PROMPT_CONC="Write a complete Python implementation of a REST API using FastAPI with full CRUD operations, authentication middleware, and database models."
 MAXTOK_CONC=1024
 
 _conc_start=$(date +%s%3N)
-for i in 1 2 3 4; do
+for i in $(seq 1 "$CONCURRENCY"); do
     outf="$TMPDIR_BENCH/conc_$i"
     _bench_one "req$i" "$PROMPT_CONC" "$MAXTOK_CONC" "$outf" &
 done
@@ -118,7 +119,7 @@ _conc_end=$(date +%s%3N)
 _conc_elapsed=$(( _conc_end - _conc_start ))
 _conc_total_tokens=0
 _conc_ok=0
-for i in 1 2 3 4; do
+for i in $(seq 1 "$CONCURRENCY"); do
     outf="$TMPDIR_BENCH/conc_$i"
     res=$(cat "$outf")
     if [ "$(echo "$res" | cut -d' ' -f1)" = "OK" ]; then

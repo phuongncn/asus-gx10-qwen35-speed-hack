@@ -285,7 +285,30 @@ print(len(mtp))
         fi
     fi
 
-    info "$OUT_NAME_FP8 ready! Run option 2 → select model to start."
+    info "$OUT_NAME_FP8 ready!"
+
+    # ── Docker image check ────────────────────────────────────────────
+    # FP8 native mode requires vllm-sm121 (or vllm-qwen35-v2) to run.
+    # Neither image is built by this path, so check and offer to build now.
+    if docker image inspect vllm-sm121:latest >/dev/null 2>&1 \
+       || docker image inspect vllm-qwen35-v2:latest >/dev/null 2>&1; then
+        info "Docker image already present — you can now run option 2 to start the server."
+    else
+        echo ""
+        warn "No Docker image found (vllm-sm121 or vllm-qwen35-v2)."
+        warn "FP8 native mode requires vllm-sm121 to run on GB10/Blackwell."
+        warn "Building Docker takes ~60-90 min but does NOT require any model download."
+        echo ""
+        read -p "Build Docker images now? (Y/n): " _DO_DOCKER
+        _DO_DOCKER=${_DO_DOCKER:-Y}
+        if [[ "$_DO_DOCKER" =~ ^[Yy]$ ]]; then
+            bash "$SCRIPT_DIR/build-docker.sh"
+            info "Docker images ready. Run option 2 → select model to start."
+        else
+            warn "Skipped. Run option 6 (Rebuild Docker) from the main menu when ready."
+            warn "Without a Docker image the server cannot start."
+        fi
+    fi
 fi
 
 info "Installation complete!"
