@@ -142,6 +142,7 @@ scripts/
   common.sh              ← shared vars, color helpers (sourced by others)
   env-check.sh           ← docker + GPU validation
   install.sh             ← option 1: download, build hybrid/FP8 checkpoint
+  build-docker.sh        ← option 6: build vllm-sm121 + vllm-qwen35-v2 images (no model download)
   build-hybrid.sh        ← option 7: build hybrid INT4+FP8 or native FP8+MTP checkpoint
   start-server.sh        ← option 2: model selection + docker run + health poll
   benchmark.sh           ← option 5: sequential + concurrent benchmark
