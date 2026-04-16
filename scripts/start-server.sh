@@ -168,6 +168,9 @@ USE_VISION=${USE_VISION:-no}
 read -p "Tensor parallel size [1]: " TP_SIZE
 TP_SIZE=${TP_SIZE:-1}
 
+read -p "Use TurboQuant KV cache compression (plugin route)? (y/N) [no]: " USE_TQ
+USE_TQ=${USE_TQ:-N}
+
 echo ""
 echo -e "${BOLD}=== Configuration ==="
 echo "  Model        : $MODEL_ID"
@@ -178,6 +181,7 @@ echo "  MTP tokens   : $MTP_TOKENS"
 echo "  Thinking     : $THINKING"
 echo "  Vision       : $USE_VISION"
 echo "  TP size      : $TP_SIZE"
+echo "  TurboQuant   : $USE_TQ"
 [ "$USE_HYBRID" = true ] && echo "  Quant mode   : ${QUANT:-autoround}"
 echo -e "${NC}"
 read -p "Continue? (Y/n): " CONFIRM
@@ -214,6 +218,7 @@ VLLM_ARGS="$VLLM_ARGS --tensor-parallel-size $TP_SIZE"
 VLLM_ARGS="$VLLM_ARGS --reasoning-parser qwen3"
 VLLM_ARGS="$VLLM_ARGS --enable-auto-tool-choice"
 VLLM_ARGS="$VLLM_ARGS --tool-call-parser qwen3_coder"
+VLLM_ARGS="$VLLM_ARGS --trust-remote-code"
 
 [ -n "$QUANT" ] && VLLM_ARGS="$VLLM_ARGS --quantization $QUANT"
 [ "${USE_FLASHINFER:-false}" = true ] && VLLM_ARGS="$VLLM_ARGS --attention-backend FLASHINFER"
@@ -257,6 +262,22 @@ else
     warn  "Run option 1 (First-time setup) to build the required images (~60-90 min)."
     exit 1
 fi
+
+# === TurboQuant Plugin ===
+if [[ "$USE_TQ" =~ ^[Yy]$ ]]; then
+    step "TurboQuant Setup"
+    info "Preparing TurboQuant plugin layer for ${DOCKER_IMAGE}..."
+    
+    # Create a fast overlay image to install the plugin without breaking the entrypoint
+    echo -e "FROM ${DOCKER_IMAGE}\nRUN pip install turboquant-vllm[vllm] && pip install --upgrade transformers tokenizers" > /tmp/Dockerfile.tq
+    docker build -t ${DOCKER_IMAGE}-tq -f /tmp/Dockerfile.tq /tmp
+    
+    # Swap the target image to our new overlay and append the CUSTOM flag
+    DOCKER_IMAGE="${DOCKER_IMAGE}-tq"
+    VLLM_ARGS="$VLLM_ARGS --attention-backend CUSTOM"
+    info "TurboQuant enabled: using CUSTOM attention backend"
+fi
+# =========================
 
 # Mount local model path if MODEL_ID is a local path (starts with /)
 LOCAL_MODEL_MOUNT=""
